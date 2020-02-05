@@ -55,12 +55,13 @@ class SentdeBot(sc2.BotAI):
 
                 if worker is None:
                     break
+
                 if not self.units(ASSIMILATOR).closer_than(1.0, gas).exists:
                     await self.do(worker.build(ASSIMILATOR, gas))
 
     #Method to build nexus if less than 2 nexi on the map and can afford it
     async def expand(self):
-        if self.units(NEXUS).amount < 2 and self.can_afford(NEXUS):
+        if self.units(NEXUS).amount < (self.iteration / self.ITERATIONS_PER_MINUTE) and self.can_afford(NEXUS):
             await self.expand_now()
 
     #Method to build offensive buildings (i.e. Race = Protoss, Gateway)
@@ -72,12 +73,12 @@ class SentdeBot(sc2.BotAI):
             if self.units(GATEWAY).ready.exists and not self.units(CYBERNETICSCORE):
                 if self.can_afford(CYBERNETICSCORE) and not self.already_pending(CYBERNETICSCORE):
                     await self.build(CYBERNETICSCORE, near=pylon)
-            elif len(self.units(GATEWAY)) < (self.iteration / self.ITERATIONS_PER_MINUTE):
+            elif len(self.units(GATEWAY)) < ((self.iteration / self.ITERATIONS_PER_MINUTE)/2):
                 if self.can_afford(GATEWAY) and not self.already_pending(GATEWAY):
                     await self.build(GATEWAY, near=pylon)
             
             if self.units(CYBERNETICSCORE).ready.exists:
-                if len(self.units(STARGATE)) < ((self.iteration / self.ITERATIONS_PER_MINUTE) / 2):
+                if len(self.units(STARGATE)) < ((self.iteration / self.ITERATIONS_PER_MINUTE)/2):
                     if self.can_afford(STARGATE) and not self.already_pending(STARGATE):
                         await self.build(STARGATE, near=pylon)
 
@@ -124,5 +125,5 @@ class SentdeBot(sc2.BotAI):
 #realtime controls speed of how game is played
 run_game(maps.get("AbyssalReefLE"), [
     Bot(Race.Protoss, SentdeBot()),
-    Computer(Race.Terran, Difficulty.Easy)
+    Computer(Race.Terran, Difficulty.Hard)
 ], realtime = False)
