@@ -236,14 +236,14 @@ class SentdeBot(sc2.BotAI):
                 if choice == 0: #Do not attack
                     wait = random.randrange(20, 165)
                     self.do_something_after = self.iteration + wait
-            elif choice == 1: #Attack units closest our nexus (random)
-                if len(self.known_enemy_units) > 0:
-                    target = self.known_enemy_units.closest_to(random.choice(self.units(NEXUS))) #TODO: Update choice of nexus
-            elif choice == 2: #Attack enemy structures if known
-                if len(self.known_enemy_structures) > 0:
-                    target = random.choice(self.known_enemy_structures)
-            elif choice == 3: #Attack enemy start location
-                target = self.enemy_start_locations[0]
+                elif choice == 1: #Attack units closest our nexus (random)
+                    if len(self.known_enemy_units) > 0:
+                        target = self.known_enemy_units.closest_to(random.choice(self.units(NEXUS))) #TODO: Update choice of nexus
+                elif choice == 2: #Attack enemy structures if known
+                    if len(self.known_enemy_structures) > 0:
+                        target = random.choice(self.known_enemy_structures)
+                elif choice == 3: #Attack enemy start location
+                    target = self.enemy_start_locations[0]
 
             if target:
                 for vr in self.units(VOIDRAY).idle:
