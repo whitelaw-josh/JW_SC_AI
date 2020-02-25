@@ -64,7 +64,7 @@ class SentdeBot(sc2.BotAI):
         if self.units(NEXUS).amount < (self.iteration / self.ITERATIONS_PER_MINUTE) and self.can_afford(NEXUS):
             await self.expand_now()
 
-    #Method to build offensive buildings (i.e. Race = Protoss, Gateway)
+    #Method to build offensive buildings (i.e. Race = Protoss, Gateway, Stargate)
     #TODO: May need to update location of building offensive force buildings
     async def build_offensive_force_buildings(self):
         if self.units(PYLON).ready.exists:
@@ -82,7 +82,7 @@ class SentdeBot(sc2.BotAI):
                     if self.can_afford(STARGATE) and not self.already_pending(STARGATE):
                         await self.build(STARGATE, near=pylon)
 
-    #Method to build offensive units (i.e.  Race = Protoss, Stalkers)
+    #Method to build offensive units (i.e.  Race = Protoss, Stalkers, Voidrays)
     async def build_offensive_force(self):
         for gw in self.units(GATEWAY).ready.noqueue:
             if not self.units(STALKER).amount > self.units(VOIDRAY).amount:
@@ -102,8 +102,7 @@ class SentdeBot(sc2.BotAI):
         else:
             return self.enemy_start_locations[0]
 
-    #Method to make offensive units attack if more than 3 stalkers and we have seen an enemy
-    #First offense, then defense
+    #Method to make offensive units attack and defend
     #TODO: Conditional to check if being attacked (i.e. defend)
     #TODO: Might need to have variable (local or outside of scope of attack method) containing sum of all offensive units
     async def attack(self):
