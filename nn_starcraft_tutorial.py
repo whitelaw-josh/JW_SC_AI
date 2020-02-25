@@ -33,7 +33,7 @@ learning_rate = 0.0001
 opt = keras.optimizers.adam(lr=learning_rate, decay=1e-6)
 model.compile(loss='categorical_crossentropy', optimizer=opt, metrics=['accuracy'])
 
-tensorboard = TensorBoard(log_dir="logs/STAGE1")
+tensorboard = TensorBoard(log_dir="C:/Program Files (x86)/StarCraft II/logs/STAGE1")
 
 #TODO: Might want to pass the lists rather than referencing them
 def check_data():
