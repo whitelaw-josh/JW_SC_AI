@@ -1,5 +1,6 @@
 import cv2
 import keras
+import math
 import numpy as np
 import os
 import random
@@ -20,9 +21,10 @@ class SentdeBot(sc2.BotAI):
         self.ITERATIONS_PER_MINUTE = 165 #Roughly 165 iterations (estimated)
         self.MAX_WORKERS = 50 #Max workers of 50
         self.do_something_after = 0 #Wait time to make another decision (iterations)
+        self.scouts_and_spots = {} #Dictionary that tracks active scouts and what they are up to {UNIT_TAG:LOCATION}
         self.train_data = []
         self.use_model = use_model
-        
+
         if self.use_model:
             print("USING MODEL!")
             self.model = keras.models.load_model("C:/Program Files (x86)/StarCraft II/logs/BasicCNN-30-epochs-0.0001-LR-4.2")
@@ -36,11 +38,14 @@ class SentdeBot(sc2.BotAI):
                 f.write("Model {}\n".format(game_result))
             else:
                 f.write("Random {}\n".format(game_result))
-        #if game_result == Result.Victory:
-            #np.save("C:/Program Files (x86)/StarCraft II/train_data/{}.npy".format(str(int(time.time()))), np.array(self.train_data))
+        
+        if game_result == Result.Victory and not self.use_model:
+            np.save("C:/Program Files (x86)/StarCraft II/train_data/{}.npy".format(str(int(time.time()))), np.array(self.train_data))
 
     async def on_step(self, iteration):
-        self.iteration = iteration
+        #self.iteration = iteration
+        self.game_time = (self.state.game_loop/22.4) / 60
+        await self.build_scout()
         await self.scout()
         await self.distribute_workers() #Distribute workers evenly to mineral patches (in sc2/bot_ai.py)
         await self.build_workers()
@@ -52,13 +57,13 @@ class SentdeBot(sc2.BotAI):
         await self.intel()
         await self.attack()
 
-    #Method for determining random movement of unit in respect to enemy start location
+    #Method for determining random movement of unit
     def random_location_variance(self, enemy_start_location):
         x = enemy_start_location[0]
         y = enemy_start_location[1]
 
-        x += ((random.randrange(-20, 20))/100) * enemy_start_location[0]
-        y += ((random.randrange(-20, 20))/100) * enemy_start_location[1]
+        x += random.randrange(-5, 5)
+        y += random.randrange(-5, 5)
 
         if x < 0:
             x = 0
@@ -72,19 +77,87 @@ class SentdeBot(sc2.BotAI):
         go_to = position.Point2(position.Pointlike((x, y))) #2d point based on position in sc2
         return go_to
 
-    #Method to scout out the enemy for intel and also build observers for scouting
-    #TODO: Consider using a random worker to scout before observers are made
-    #TODO: Utilize multiple scouting units
-    async def scout(self):
-        if len(self.units(OBSERVER)) > 0:
-            if self.units(OBSERVER)[0].is_idle:
-                move_to = self.random_location_variance(self.enemy_start_locations[0])
-                #print(move_to)
-                await self.do(self.units(OBSERVER)[0].move(move_to))
-        else:
+    #Method to build scouting units
+    #TODO: Second check in the first if statement is to make sure we do not keep building observers past the unit limit defined in scout
+    #(5 for observers).  The 6th observer would be useful to move with the army
+    async def build_scout(self):
+        if len(self.units(OBSERVER)) < math.floor(self.game_time/3) and len(self.units(OBSERVER)) < 5: #Want to build observers every 3 minutes
             for rf in self.units(ROBOTICSFACILITY).ready.noqueue:
+                print(len(self.units(OBSERVER)), self.game_time/3)
                 if self.can_afford(OBSERVER) and self.supply_left > 0:
                     await self.do(rf.train(OBSERVER))
+
+    #Method to scout out the enemy for intel by either utilizing workers or building observers
+    #Also maintains self.scouts_and_spots dictionary
+    async def scout(self):
+        self.expand_dis_dir = {} #Maintain enemy expansion distances from enemy start location {DISTANCE:EXPANSION_LOC}
+
+        #Inflate expand_dis_dir with expansion distances and locations
+        for el in self.expansion_locations:
+            self.expand_dis_dir[el.distance_to(self.enemy_start_locations[0])] = el
+
+        #NOTE: Might not need to sort with Python 3.7
+        self.ordered_exp_distances = sorted(k for k in self.expand_dis_dir)
+
+        existing_ids = [unit.tag for unit in self.units]
+        
+        #Removing of scouts that are dead
+        to_be_removed = []
+        for noted_scout in self.scouts_and_spots:
+            if noted_scout not in existing_ids:
+                to_be_removed.append(noted_scout)
+
+        for scout in to_be_removed:
+            del self.scouts_and_spots[scout]
+
+        if len(self.units(ROBOTICSFACILITY).ready) == 0:
+            unit_type = PROBE
+            unit_limit = 1
+        else:
+            unit_type = OBSERVER
+            unit_limit = 5
+
+        assign_scout = True
+
+        #Check to see if we need to assign a probe as a scout
+        if unit_type == PROBE:
+            for unit in self.units(PROBE):
+                if unit.tag in self.scouts_and_spots:
+                    assign_scout = False
+
+        #Then iterate over distances from closest to furthers from enemy start location. Within each distance
+        if assign_scout:
+            if len(self.units(unit_type).idle) > 0: #Assign scout unit that is idle and iterate over limit type of scout unit (PROBE = 1, OBSERVER = 15)
+                for obs in self.units(unit_type).idle[:unit_limit]: 
+                    if obs.tag not in self.scouts_and_spots:
+                        for dist in self.ordered_exp_distances:
+                            try:
+                                #Grab the location of possible enemy base
+                                location = self.expand_dis_dir[dist] #next(value for key, value in self.expand_dis_dir() if key == dist)
+                                #List of active locations already being scouted
+                                active_locations = [self.scouts_and_spots[k] for k in self.scouts_and_spots]
+
+                                #If not being actively scouted, assign a scout to scout location
+                                if location not in active_locations:
+                                    if unit_type == PROBE:
+                                        for unit in self.units(PROBE):
+                                            if unit.tag in self.scouts_and_spots:
+                                                continue
+
+                                    await self.do(obs.move(location))
+                                    self.scouts_and_spots[obs.tag] = location
+
+                                    break
+                            except Exception as e:
+                                print(str(e))
+                                #pass
+                                
+        #Keep probes moving so they don't get assigned to minerals
+        for obs in self.units(unit_type):
+            if obs.tag in self.scouts_and_spots:
+                if obs in [probe for probe in self.units(PROBE)]:
+                    await self.do(obs.move(self.random_location_variance(self.scouts_and_spots[obs.tag])))
+
 
     #Method to build workers at NEXUS if affordable
     #TODO: consider if 16 should be switched to 22 for workers in mineral patches and assimilators
@@ -125,8 +198,11 @@ class SentdeBot(sc2.BotAI):
 
     #Method to build nexus if less than 2 nexi on the map and can afford it
     async def expand(self):
-        if self.units(NEXUS).amount < (self.iteration / self.ITERATIONS_PER_MINUTE) and self.can_afford(NEXUS):
-            await self.expand_now()
+        try: 
+            if self.units(NEXUS).amount < self.game_time / 2 and self.can_afford(NEXUS):
+                await self.expand_now()
+        except Exception as e:
+            print(str(e))
 
     #Method to build offensive buildings (i.e. Race = Protoss, Stargate, RoboticsFacility)
     #TODO: May need to update location of building offensive force buildings
@@ -146,7 +222,8 @@ class SentdeBot(sc2.BotAI):
                 if len(self.units(ROBOTICSFACILITY)) < 1:
                     if self.can_afford(ROBOTICSFACILITY) and not self.already_pending(ROBOTICSFACILITY):
                         await self.build(ROBOTICSFACILITY, near=pylon)
-                elif len(self.units(STARGATE)) < (self.iteration / self.ITERATIONS_PER_MINUTE):
+
+                if len(self.units(STARGATE)) < self.game_time:
                     if self.can_afford(STARGATE) and not self.already_pending(STARGATE):
                         await self.build(STARGATE, near=pylon)
 
@@ -242,7 +319,7 @@ class SentdeBot(sc2.BotAI):
         if len(self.units(VOIDRAY).idle) > 0:   
             target = False
 
-            if self.iteration > self.do_something_after:
+            if self.game_time > self.do_something_after:
                 if self.use_model:
                     prediction = self.model.predict([self.flipped.reshape([-1, 176, 200, 3])])
                     choice = np.argmax(prediction[0])
@@ -260,8 +337,8 @@ class SentdeBot(sc2.BotAI):
                     choice = random.randrange(0, 4)
 
                 if choice == 0: #Do not attack
-                    wait = random.randrange(20, 165)
-                    self.do_something_after = self.iteration + wait
+                    wait = random.randrange(7,100)/100
+                    self.do_something_after = self.game_time + wait
                 elif choice == 1: #Attack units closest our nexus (random)
                     if len(self.known_enemy_units) > 0:
                         target = self.known_enemy_units.closest_to(random.choice(self.units(NEXUS))) #TODO: Update choice of nexus
@@ -282,7 +359,6 @@ class SentdeBot(sc2.BotAI):
 
 #Starts the game we want to run taking into the map and players we wish to add
 #realtime controls speed of how game is played
-#for i in range(100):
 run_game(maps.get("AbyssalReefLE"), [
     Bot(Race.Protoss, SentdeBot()),
     Computer(Race.Terran, Difficulty.Easy)
