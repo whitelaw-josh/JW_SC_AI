@@ -1,4 +1,0 @@
-Model Result.Defeat
-Model Result.Defeat
-Model Result.Defeat
-Model Result.Victory
