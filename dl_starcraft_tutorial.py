@@ -1,4 +1,5 @@
 import cv2
+import keras
 import numpy as np
 import os
 import random
@@ -15,18 +16,28 @@ HEADLESS = False
 
 #Our BotAI class
 class SentdeBot(sc2.BotAI):
-    def __init__(self):
+    def __init__(self, use_model=True):
         self.ITERATIONS_PER_MINUTE = 165 #Roughly 165 iterations (estimated)
         self.MAX_WORKERS = 50 #Max workers of 50
         self.do_something_after = 0 #Wait time to make another decision (iterations)
         self.train_data = []
+        self.use_model = use_model
+        
+        if self.use_model:
+            print("USING MODEL!")
+            self.model = keras.models.load_model("C:/Program Files (x86)/StarCraft II/logs/BasicCNN-30-epochs-0.0001-LR-4.2")
 
     def on_end(self, game_result):
         print('---- on_end called ----')
-        print(game_result)
+        print(game_result, self.use_model)
 
-        if game_result == Result.Victory:
-            np.save("C:/Program Files (x86)/StarCraft II/train_data/{}.npy".format(str(int(time.time()))), np.array(self.train_data))
+        with open("log.txt", "a") as f:
+            if self.use_model:
+                f.write("Model {}\n".format(game_result))
+            else:
+                f.write("Random {}\n".format(game_result))
+        #if game_result == Result.Victory:
+            #np.save("C:/Program Files (x86)/StarCraft II/train_data/{}.npy".format(str(int(time.time()))), np.array(self.train_data))
 
     async def on_step(self, iteration):
         self.iteration = iteration
@@ -41,7 +52,7 @@ class SentdeBot(sc2.BotAI):
         await self.intel()
         await self.attack()
 
-
+    #Method for determining random movement of unit in respect to enemy start location
     def random_location_variance(self, enemy_start_location):
         x = enemy_start_location[0]
         y = enemy_start_location[1]
@@ -228,11 +239,26 @@ class SentdeBot(sc2.BotAI):
     #TODO: Conditional to check if being attacked (i.e. defend)
     #TODO: Might need to have variable (local or outside of scope of attack method) containing sum of all offensive units
     async def attack(self):
-        if len(self.units(VOIDRAY).idle) > 0:
-            choice = random.randrange(0, 4)
+        if len(self.units(VOIDRAY).idle) > 0:   
             target = False
 
             if self.iteration > self.do_something_after:
+                if self.use_model:
+                    prediction = self.model.predict([self.flipped.reshape([-1, 176, 200, 3])])
+                    choice = np.argmax(prediction[0])
+                    #print('prediction: ',choice)
+
+                    choice_dict = {
+                        0: "No attack",
+                        1: "Attack close to our nexus",
+                        2: "Attack enemy structure",
+                        3: "Attack enemy start"
+                    }
+
+                    print("Choice #{}:{}".format(choice, choice_dict[choice]))
+                else:
+                    choice = random.randrange(0, 4)
+
                 if choice == 0: #Do not attack
                     wait = random.randrange(20, 165)
                     self.do_something_after = self.iteration + wait
@@ -245,17 +271,18 @@ class SentdeBot(sc2.BotAI):
                 elif choice == 3: #Attack enemy start location
                     target = self.enemy_start_locations[0]
 
-            if target:
-                for vr in self.units(VOIDRAY).idle:
-                    await self.do(vr.attack(target))
-            
-            y = np.zeros(4)
-            y[choice] = 1
-            #print(y)
-            self.train_data.append([y, self.flipped])
+                if target:
+                    for vr in self.units(VOIDRAY).idle:
+                        await self.do(vr.attack(target))
+                
+                y = np.zeros(4)
+                y[choice] = 1
+                #print(y)
+                self.train_data.append([y, self.flipped])
 
 #Starts the game we want to run taking into the map and players we wish to add
 #realtime controls speed of how game is played
+#for i in range(100):
 run_game(maps.get("AbyssalReefLE"), [
     Bot(Race.Protoss, SentdeBot()),
     Computer(Race.Terran, Difficulty.Easy)
