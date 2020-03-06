@@ -4,12 +4,12 @@ import math
 import numpy as np
 import os
 import random
-import time
 import sc2
+import time
 from sc2 import run_game, maps, Race, Difficulty, position, Result
 from sc2.player import Bot, Computer
 from sc2.constants import NEXUS, PROBE, PYLON, ASSIMILATOR, GATEWAY, \
-    CYBERNETICSCORE, STARGATE, ROBOTICSFACILITY, STALKER, VOIDRAY, OBSERVER
+    CYBERNETICSCORE, STARGATE, ROBOTICSFACILITY, STALKER, VOIDRAY, OBSERVER, ZEALOT
 
 #os.environ["SC2PATH"] = 'C:\Program Files (x86)\StarCraft II'
 
@@ -45,7 +45,7 @@ class SentdeBot(sc2.BotAI):
 
         if self.use_model:
             print("USING MODEL!")
-            self.model = keras.models.load_model("C:/Program Files (x86)/StarCraft II/logs/BasicCNN-30-epochs-0.0001-LR-4.2")
+            self.model = keras.models.load_model("C:/Program Files (x86)/StarCraft II/logs/BasicCNN-5000-epochs-0.001-LR-STAGE2")
 
     def on_end(self, game_result):
         print('---- on_end called ----')
@@ -55,12 +55,12 @@ class SentdeBot(sc2.BotAI):
             if self.use_model:
                 f.write("Model {} - {}\n".format(game_result, int(time.time())))
             else:
-                f.write("Random {} - {}\n".format(game_result, int(time.time()))
+                f.write("Random {} - {}\n".format(game_result, int(time.time())))
         
-        # if game_result == Result.Victory and not self.use_model:
-        #     np.save("C:/Program Files (x86)/StarCraft II/train_data/{}.npy".format(str(int(time.time()))), np.array(self.train_data))
+        if game_result == Result.Victory and not self.use_model:
+            np.save("C:/Program Files (x86)/StarCraft II/train_data/{}.npy".format(str(int(time.time()))), np.array(self.train_data))
 
-#********** START OF ON_STEP FUNCTIONALITY ********** 
+#********** START OF ON_STEP FUNCTIONALITY **********
     async def on_step(self, iteration):
         #self.iteration = iteration
         self.game_time = (self.state.game_loop/22.4) / 60
@@ -174,9 +174,11 @@ class SentdeBot(sc2.BotAI):
     async def intel(self):
         game_data = np.zeros((self.game_info.map_size[1], self.game_info.map_size[0], 3), np.uint8) #Blacked out screen of the map (general 200x200)
 
+        #cv2.circle(map, coordinates (x,y), radius of the unit, line thickness)
         for unit in self.units().ready:
             cv2.circle(game_data, (int(unit.position[0]), int(unit.position[1])), int(unit.radius*8), (255, 255, 255), math.ceil(int(unit.radius*0.5)))
 
+        #cv2.circle(map, coordinates (x,y), radius of the unit, line thickness)
         for unit in self.known_enemy_units:
             cv2.circle(game_data, (int(unit.position[0]), int(unit.position[1])), int(unit.radius*8), (125, 125, 125), math.ceil(int(unit.radius*0.5)))
    
@@ -219,16 +221,28 @@ class SentdeBot(sc2.BotAI):
         resized = cv2.resize(self.flipped, dsize=None, fx=2, fy=2)
 
         if not HEADLESS:
-            cv2.imshow(str(self.title) resized)
+            cv2.imshow(str(self.title), resized)
             cv2.waitKey(1)
 
     #Method to make decision for bot to execute either via model choice or random choice
     async def do_something(self):
         if self.game_time > self.do_something_after:
             if self.use_model:
-                prediction = self.model.predict([self.flipped.reshape([-1, 176, 200, 3])])
-                choice = np.argmax(prediction[0])
-            else
+                worker_weight = 1.4
+                zealot_weight = 1
+                voidray_weight = 1
+                stalker_weight = 1
+                pylon_weight = 1.3
+                stargate_weight = 1
+                gateway_weight = 1
+                assimilator_weight = 2
+
+                prediction = self.model.predict([self.flipped.reshape([-1, 176, 200, 1])])
+                weights = [1, zealot_weight, gateway_weight, voidray_weight, stalker_weight, worker_weight, assimilator_weight, stargate_weight, pylon_weight, 1, 1, 1, 1, 1]
+                weighted_prediction = prediction[0]*weights
+                choice = np.argmax(weighted_prediction)
+                print('Prediction Choice:',the_choices[choice])
+            else:
                 worker_weight = 8
                 zealot_weight = 3
                 voidray_weight = 20
@@ -243,7 +257,8 @@ class SentdeBot(sc2.BotAI):
             try:
                 await self.choices[choice]()
             except Exception as e:
-                print(str(e))
+                print("CHOICE: {}".format(choice))
+                print("ERROR: {}".format(str(e)))
 
             y = np.zeros(14)
             y[choice] = 1
@@ -257,9 +272,9 @@ class SentdeBot(sc2.BotAI):
     #(5 for observers).  The 6th observer would be useful to move with the army
     #TODO: Move building robotics facility into separate method
     async def build_scout(self):
-        if self.units(CYBERNETICSCORE).ready.exists and len(self.units(ROBOTICSFACILITY)) < 1:
+        if self.units(CYBERNETICSCORE).ready.exists and len(self.units(ROBOTICSFACILITY)) == 0:
             if self.can_afford(ROBOTICSFACILITY) and not self.already_pending(ROBOTICSFACILITY):
-                await self.build(ROBOTICSFACILITY), near=pylon)
+                await self.build(ROBOTICSFACILITY, near=self.units(PYLON).ready.noqueue.random)
 
         if len(self.units(OBSERVER)) < math.floor(self.game_time/3) and len(self.units(OBSERVER)) < 5: #Want to build observers every 3 minutes
             for rf in self.units(ROBOTICSFACILITY).ready.noqueue:
@@ -277,10 +292,11 @@ class SentdeBot(sc2.BotAI):
     #Method to build gateway buildings
     #TODO: Time check to build gateways (Equation to calculate number of gateways to build at certain times)
     async def build_gateway(self):
-        pylon = self.units(PYLON).ready.random
+        if self.units(PYLON).ready.exists:
+            pylon = self.units(PYLON).ready.random
 
-        if pylon.exists and self.can_afford(GATEWAY) and not self.already_pending(GATEWAY):
-            await self.build(GATEWAY, near=pylon)
+            if self.can_afford(GATEWAY) and not self.already_pending(GATEWAY):
+                await self.build(GATEWAY, near=pylon.position.towards(self.game_info.map_center, 5))
 
     #Method to build voidray units
     async def build_voidray(self):
@@ -291,16 +307,19 @@ class SentdeBot(sc2.BotAI):
     
     #Method to build stalker units
     async def build_stalker(self):
-        pylon = self.units(PYLON).ready.random
-        gateways = self.units(GATEWAY).ready
+        pylon = self.units(PYLON).ready.noqueue.random
+        gateways = self.units(GATEWAY).ready    
         cybernetics_cores = self.units(CYBERNETICSCORE).ready
 
-        if not cybernetics_cores.exists and self.unit(GATEWAY).ready.exists:
-            if self.can_afford(CYBERNETICSCORE) and not self.already_pending(CYBERNETICSCORE):
-                await self.build(CYBERNETICSCORE, near=pylon)
+        if gateways.exists and cybernetics_cores.exists:
+            if self.can_afford(STALKER):
+                await self.do(random.choice(gateways).train(STALKER))
 
-        if gateways.exists and cybernetics_cores.exists and self.can_afford(STALKER):
-            await self.do(random.choice(gateways).train(STALKER))
+        if not cybernetics_cores.exists:
+            if self.units(GATEWAY).ready.exists:
+                if self.can_afford(CYBERNETICSCORE) and not self.already_pending(CYBERNETICSCORE):
+                    await self.build(CYBERNETICSCORE, near=pylon.position.towards(self.game_info.map_center, 5))
+
 
     #Method to build workers at a nexus if affordable
     #TODO: Update method to take into account # of nexuses with # of workers with regard to game_time as well and not go past MAX_WORKERS 
@@ -331,9 +350,9 @@ class SentdeBot(sc2.BotAI):
 
     #Method to build stargate building
     async def build_stargate(self):
-        pylon = self.units(PYLON).ready.random
+        if self.units(PYLON).ready.exists and self.units(CYBERNETICSCORE).ready.exists:
+            pylon = self.units(PYLON).ready.random
 
-        if pylon.exists and self.units(CYBERNETICSCORE).ready.exists:
             if self.can_afford(STARGATE) and not self.already_pending(STARGATE):
                 await self.build(STARGATE, near=pylon)
 
@@ -347,29 +366,50 @@ class SentdeBot(sc2.BotAI):
             if nexuses.exists and self.can_afford(PYLON):
                 await self.build(PYLON, near=self.units(NEXUS).first.position.towards(self.game_info.map_center, 5))
 
-    #Method to assign units to target
-    #TODO: Might be better to get a list of attack units and apply target for attacking units across said list (i.e. one liner?)
-    def attack_target(self, target):
-        for u in self.units(VOIDRAY).idle:
-            await self.do(u.attack(target))
-        for u in self.units(STALKER).idle:
-            await self.do(u.attack(target))
-        for u in self.units(ZEALOT).idle:
-            await self.do(u.attack(target))
+    # #Method to assign army units to target
+    # #TODO: Might be better to get a list of attack units and apply target for attacking units across said list (i.e. one liner?)
+    # async def attack_target(self, target):
+    #     for u in self.units(VOIDRAY).idle:
+    #         await self.do(u.attack(target))
+    #     for u in self.units(STALKER).idle:
+    #         await self.do(u.attack(target))
+    #     for u in self.units(ZEALOT).idle:
+    #         await self.do(u.attack(target))
 
     #Method to defend nexus from enemy units
     async def defend_nexus(self):
-        target = self.known_enemy_units.closest_to(random.choice(self.units(NEXUS)))
-        self.attack_target(target)
+        if len(self.known_enemy_units) > 0:
+            target = self.known_enemy_units.closest_to(random.choice(self.units(NEXUS)))
+
+            for u in self.units(VOIDRAY).idle:
+                await self.do(u.attack(target))
+            for u in self.units(STALKER).idle:
+                await self.do(u.attack(target))
+            for u in self.units(ZEALOT).idle:
+                await self.do(u.attack(target))
 
     #Method to attack enemy units if known
     async def attack_known_enemy_unit(self):
-        target = self.known_enemy_units.closest_to(random.choice(self.units(NEXUS)))
-        self.attack_target(target)
+        if len(self.known_enemy_units) > 0:
+            target = self.known_enemy_units.closest_to(random.choice(self.units(NEXUS)))
+
+            for u in self.units(VOIDRAY).idle:
+                await self.do(u.attack(target))
+            for u in self.units(STALKER).idle:
+                await self.do(u.attack(target))
+            for u in self.units(ZEALOT).idle:
+                await self.do(u.attack(target))
 
     async def attack_known_enemy_structure(self):
-        target = random.choice(self.known_enemy_structures)
-        self.attack_target(target)
+        if len(self.known_enemy_structures) > 0:
+            target = random.choice(self.known_enemy_structures)
+
+            for u in self.units(VOIDRAY).idle:
+                await self.do(u.attack(target))
+            for u in self.units(STALKER).idle:
+                await self.do(u.attack(target))
+            for u in self.units(ZEALOT).idle:
+                await self.do(u.attack(target))
 
     #Method to build nexus if less than 2 nexus on the map and can afford it
     async def expand(self):
@@ -388,6 +428,6 @@ class SentdeBot(sc2.BotAI):
 #Starts the game we want to run taking into the map and players we wish to add
 #realtime controls speed of how game is played
 run_game(maps.get("AbyssalReefLE"), [
-    Bot(Race.Protoss, SentdeBot()),
-    Computer(Race.Terran, Difficulty.Easy)
+    Bot(Race.Protoss, SentdeBot(use_model=True), title=1),
+    Computer(Race.Protoss, Difficulty.Easy)
 ], realtime = False)
